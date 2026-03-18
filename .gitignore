@@ -1,0 +1,15 @@
+# Build output
+dist/
+bin/
+obj/
+.packages/
+
+# Visual Studio
+*.user
+*.suo
+.vs/
+*.sln.docstates
+
+# Logs & temp
+*.log
+*.tmp
