@@ -25,5 +25,14 @@ namespace PdfMerger.Properties
             get { return ((string)(this["OutputFolder"])); }
             set { this["OutputFolder"] = value; }
         }
+
+        [global::System.Configuration.UserScopedSettingAttribute()]
+        [global::System.Diagnostics.DebuggerNonUserCodeAttribute()]
+        [global::System.Configuration.DefaultSettingValueAttribute("1")]
+        public int TestCounter
+        {
+            get { return ((int)(this["TestCounter"])); }
+            set { this["TestCounter"] = value; }
+        }
     }
 }

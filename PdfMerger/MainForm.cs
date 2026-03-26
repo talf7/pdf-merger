@@ -266,9 +266,11 @@ namespace PdfMerger
         {
             if (_pdfFiles.Count < 2 || OutputFolder == null) return;
 
-            string outputFile = Path.Combine(
-                OutputFolder,
-                "Merged_" + DateTime.Now.ToString("yyyy-MM-dd_HHmmss") + ".pdf");
+            string firstName = Path.GetFileNameWithoutExtension(_pdfFiles[0]);
+            int counter = Properties.Settings.Default.TestCounter;
+            string date = DateTime.Now.ToString("dd-MM-yyyy");
+            string outputFile = Path.Combine(OutputFolder,
+                string.Format("{0}_{1}_{2}.pdf", firstName, counter, date));
 
             try
             {
@@ -287,6 +289,9 @@ namespace PdfMerger
                     }
                     output.Save(outputFile);
                 }
+
+                Properties.Settings.Default.TestCounter = counter + 1;
+                Properties.Settings.Default.Save();
 
                 _pdfFiles.Clear();
                 UpdateUI();
