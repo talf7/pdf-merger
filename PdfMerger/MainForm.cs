@@ -269,12 +269,10 @@ namespace PdfMerger
             if (_pdfFiles.Count < 2 || OutputFolder == null) return;
 
             string vehicleNum, testNum, inspDate;
-            ExtractPdfFields(_pdfFiles[0], out vehicleNum, out testNum, out inspDate);
-            string vehiclePart = vehicleNum ?? Path.GetFileNameWithoutExtension(_pdfFiles[0]);
-            string testPart    = testNum    ?? Properties.Settings.Default.TestCounter.ToString();
-            string datePart    = inspDate   ?? DateTime.Now.ToString("dd-MM-yyyy");
-            string outputFile  = Path.Combine(OutputFolder,
-                string.Format("{0}_{1}_{2}.pdf", vehiclePart, testPart, datePart));
+            if (!ShowFieldsDialog(out vehicleNum, out testNum, out inspDate))
+                return;
+            string outputFile = Path.Combine(OutputFolder,
+                string.Format("{0}_{1}_{2}.pdf", vehicleNum, testNum, inspDate));
 
             try
             {
@@ -319,41 +317,55 @@ namespace PdfMerger
             }
         }
 
-        private void ExtractPdfFields(string pdfPath, out string vehicleNum, out string testNum, out string date)
+        private bool ShowFieldsDialog(out string vehicleNum, out string testNum, out string date)
         {
-            vehicleNum = null;
-            testNum    = null;
-            date       = null;
-            try
+            vehicleNum = null; testNum = null; date = null;
+
+            var dlg = new Form();
+            dlg.Text = "פרטי הבדיקה";
+            dlg.RightToLeft = RightToLeft.Yes;
+            dlg.RightToLeftLayout = true;
+            dlg.Width = 340;
+            dlg.Height = 210;
+            dlg.FormBorderStyle = FormBorderStyle.FixedDialog;
+            dlg.StartPosition = FormStartPosition.CenterParent;
+            dlg.MaximizeBox = false;
+            dlg.MinimizeBox = false;
+
+            int y = 18;
+            Func<string, TextBox> addRow = label =>
             {
-                using (var reader = new iTextSharp.text.pdf.PdfReader(pdfPath))
-                {
-                    var sb = new StringBuilder();
-                    for (int p = 1; p <= reader.NumberOfPages; p++)
-                        sb.AppendLine(iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, p));
-                    string text = sb.ToString();
+                var lbl = new Label { Text = label, Left = 180, Top = y + 3, Width = 120, TextAlign = ContentAlignment.MiddleRight };
+                var txt = new TextBox { Left = 16, Top = y, Width = 160, RightToLeft = RightToLeft.No };
+                dlg.Controls.Add(lbl);
+                dlg.Controls.Add(txt);
+                y += 38;
+                return txt;
+            };
 
-                    // DEBUG - הצג את הטקסט שנחלץ
-                    System.IO.File.WriteAllText(
-                        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "pdf_debug.txt"),
-                        text, System.Text.Encoding.UTF8);
-                    MessageBox.Show("טקסט שנחלץ נשמר ב:\n" + System.IO.Path.Combine(System.IO.Path.GetTempPath(), "pdf_debug.txt"),
-                        "DEBUG", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            var txtVehicle = addRow("מספר רכב:");
+            var txtTest    = addRow("מס' בדיקה:");
+            var txtDate    = addRow("תאריך (dd-MM-yyyy):");
+            txtDate.Text   = DateTime.Now.ToString("dd-MM-yyyy");
 
-                    Match m = Regex.Match(text, @"מספר\s+רכב[:\s]+(\d{5,10})");
-                    if (m.Success) vehicleNum = m.Groups[1].Value;
+            var btnOk = new Button { Text = "אישור", Left = 220, Top = y, Width = 80, DialogResult = DialogResult.OK };
+            var btnCancel = new Button { Text = "ביטול", Left = 130, Top = y, Width = 80, DialogResult = DialogResult.Cancel };
+            dlg.Controls.Add(btnOk);
+            dlg.Controls.Add(btnCancel);
+            dlg.AcceptButton = btnOk;
+            dlg.CancelButton = btnCancel;
 
-                    m = Regex.Match(text, @"מס['\u2019]?\s*בדיקה[:\s]+(\d{4,8})");
-                    if (m.Success) testNum = m.Groups[1].Value;
-
-                    m = Regex.Match(text, @"בתאריך[:\s]+(\d{2}/\d{2}/\d{4})");
-                    if (m.Success) date = m.Groups[1].Value.Replace("/", "-");
-                }
-            }
-            catch (Exception ex)
+            if (dlg.ShowDialog(this) != DialogResult.OK) return false;
+            if (string.IsNullOrWhiteSpace(txtVehicle.Text) || string.IsNullOrWhiteSpace(txtTest.Text))
             {
-                MessageBox.Show("שגיאה בחילוץ:\n" + ex.Message, "DEBUG", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("יש למלא מספר רכב ומס' בדיקה.", "שגיאה", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return false;
             }
+
+            vehicleNum = txtVehicle.Text.Trim();
+            testNum    = txtTest.Text.Trim();
+            date       = string.IsNullOrWhiteSpace(txtDate.Text) ? DateTime.Now.ToString("dd-MM-yyyy") : txtDate.Text.Trim();
+            return true;
         }
     }
 }

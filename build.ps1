@@ -14,8 +14,7 @@ Write-Host "=== PDF Merger - Build Script ===" -ForegroundColor Cyan
 Write-Host ""
 
 # ── 1. Create output folder ───────────────────────────────────────────────────
-if (Test-Path $DistDir) { Remove-Item $DistDir -Recurse -Force }
-New-Item -ItemType Directory -Path $DistDir | Out-Null
+New-Item -ItemType Directory -Path $DistDir -Force | Out-Null
 New-Item -ItemType Directory -Path $PkgDir  -Force | Out-Null
 
 # ── Helper: download a NuGet package and extract a DLL ───────────────────────
