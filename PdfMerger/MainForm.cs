@@ -333,6 +333,13 @@ namespace PdfMerger
                         sb.AppendLine(iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, p));
                     string text = sb.ToString();
 
+                    // DEBUG - הצג את הטקסט שנחלץ
+                    System.IO.File.WriteAllText(
+                        System.IO.Path.Combine(System.IO.Path.GetTempPath(), "pdf_debug.txt"),
+                        text, System.Text.Encoding.UTF8);
+                    MessageBox.Show("טקסט שנחלץ נשמר ב:\n" + System.IO.Path.Combine(System.IO.Path.GetTempPath(), "pdf_debug.txt"),
+                        "DEBUG", MessageBoxButtons.OK, MessageBoxIcon.Information);
+
                     Match m = Regex.Match(text, @"מספר\s+רכב[:\s]+(\d{5,10})");
                     if (m.Success) vehicleNum = m.Groups[1].Value;
 
@@ -343,7 +350,10 @@ namespace PdfMerger
                     if (m.Success) date = m.Groups[1].Value.Replace("/", "-");
                 }
             }
-            catch { /* fallback values used in caller */ }
+            catch (Exception ex)
+            {
+                MessageBox.Show("שגיאה בחילוץ:\n" + ex.Message, "DEBUG", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
         }
     }
 }

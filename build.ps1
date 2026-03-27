@@ -7,6 +7,7 @@ $DistDir        = Join-Path $ScriptDir "dist"
 $PkgDir         = Join-Path $ScriptDir ".packages"
 $PdfSharpDll    = Join-Path $PkgDir "PdfSharp.dll"
 $iTextSharpDll  = Join-Path $PkgDir "iTextSharp.dll"
+$BouncyCastleDll= Join-Path $PkgDir "BouncyCastle.Crypto.dll"
 
 Write-Host ""
 Write-Host "=== PDF Merger - Build Script ===" -ForegroundColor Cyan
@@ -70,8 +71,9 @@ function Get-NugetDll {
 
 # ── 2. Download dependencies ──────────────────────────────────────────────────
 Write-Host "[1/3] Checking dependencies..." -ForegroundColor Yellow
-Get-NugetDll -PackageId "PdfSharp"   -Version "1.50.5147" -DestDll $PdfSharpDll   -PreferPath "net4"
-Get-NugetDll -PackageId "iTextSharp" -Version "5.5.13.3"  -DestDll $iTextSharpDll -PreferPath "net40"
+Get-NugetDll -PackageId "PdfSharp"    -Version "1.50.5147" -DestDll $PdfSharpDll    -PreferPath "net4"
+Get-NugetDll -PackageId "iTextSharp"  -Version "5.5.13.3"  -DestDll $iTextSharpDll  -PreferPath "net40"
+Get-NugetDll -PackageId "BouncyCastle" -Version "1.8.9"    -DestDll $BouncyCastleDll -PreferPath "net40"
 
 # ── 3. Compile ────────────────────────────────────────────────────────────────
 Write-Host "[2/3] Compiling..." -ForegroundColor Yellow
@@ -104,7 +106,8 @@ $refs = @(
     "System.Xml.dll",
     "Microsoft.CSharp.dll",
     "`"$PdfSharpDll`"",
-    "`"$iTextSharpDll`""
+    "`"$iTextSharpDll`"",
+    "`"$BouncyCastleDll`""
 )
 
 $refArgs  = $refs | ForEach-Object { "/r:$_" }
@@ -134,8 +137,9 @@ if ($proc.ExitCode -ne 0) {
 Write-Host "    Compiled OK." -ForegroundColor Green
 
 # ── 4. Copy runtime files ─────────────────────────────────────────────────────
-Copy-Item $PdfSharpDll   "$DistDir\PdfSharp.dll"
-Copy-Item $iTextSharpDll "$DistDir\itextsharp.dll"
+Copy-Item $PdfSharpDll    "$DistDir\PdfSharp.dll"
+Copy-Item $iTextSharpDll  "$DistDir\itextsharp.dll"
+Copy-Item $BouncyCastleDll "$DistDir\BouncyCastle.Crypto.dll"
 Copy-Item "$ProjectDir\app.config" "$DistDir\PdfMerger.exe.config"
 
 # ── 5. Done ───────────────────────────────────────────────────────────────────
@@ -147,6 +151,7 @@ Write-Host "Files to distribute (copy these 4 files):" -ForegroundColor White
 Write-Host "  - PdfMerger.exe" -ForegroundColor White
 Write-Host "  - PdfSharp.dll" -ForegroundColor White
 Write-Host "  - itextsharp.dll" -ForegroundColor White
+Write-Host "  - BouncyCastle.Crypto.dll" -ForegroundColor White
 Write-Host "  - PdfMerger.exe.config" -ForegroundColor White
 Write-Host ""
 
