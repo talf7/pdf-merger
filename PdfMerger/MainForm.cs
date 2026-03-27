@@ -268,8 +268,12 @@ namespace PdfMerger
         {
             if (_pdfFiles.Count < 2 || OutputFolder == null) return;
 
+            string initVehicle, initTest, initDate;
+            ExtractPdfFields(_pdfFiles[0], out initVehicle, out initTest, out initDate);
+
             string vehicleNum, testNum, inspDate;
-            if (!ShowFieldsDialog(out vehicleNum, out testNum, out inspDate))
+            if (!ShowFieldsDialog(initVehicle, initTest, initDate,
+                    out vehicleNum, out testNum, out inspDate))
                 return;
             string outputFile = Path.Combine(OutputFolder,
                 string.Format("{0}_{1}_{2}.pdf", vehicleNum, testNum, inspDate));
@@ -317,7 +321,8 @@ namespace PdfMerger
             }
         }
 
-        private bool ShowFieldsDialog(out string vehicleNum, out string testNum, out string date)
+        private bool ShowFieldsDialog(string initVehicle, string initTest, string initDate,
+            out string vehicleNum, out string testNum, out string date)
         {
             vehicleNum = null; testNum = null; date = null;
 
@@ -344,9 +349,11 @@ namespace PdfMerger
             };
 
             var txtVehicle = addRow("מספר רכב:");
+            txtVehicle.Text = initVehicle ?? "";
             var txtTest    = addRow("מס' בדיקה:");
+            txtTest.Text   = initTest ?? "";
             var txtDate    = addRow("תאריך (dd-MM-yyyy):");
-            txtDate.Text   = DateTime.Now.ToString("dd-MM-yyyy");
+            txtDate.Text   = initDate ?? DateTime.Now.ToString("dd-MM-yyyy");
 
             var btnOk = new Button { Text = "אישור", Left = 220, Top = y, Width = 80, DialogResult = DialogResult.OK };
             var btnCancel = new Button { Text = "ביטול", Left = 130, Top = y, Width = 80, DialogResult = DialogResult.Cancel };
@@ -366,6 +373,114 @@ namespace PdfMerger
             testNum    = txtTest.Text.Trim();
             date       = string.IsNullOrWhiteSpace(txtDate.Text) ? DateTime.Now.ToString("dd-MM-yyyy") : txtDate.Text.Trim();
             return true;
+        }
+
+        // ── PDF Field Extraction ───────────────────────────────────────────────
+
+        private void ExtractPdfFields(string pdfPath,
+            out string vehicleNum, out string testNum, out string date)
+        {
+            vehicleNum = null; testNum = null; date = null;
+            try
+            {
+                using (var reader = new iTextSharp.text.pdf.PdfReader(pdfPath))
+                {
+                    var pageRect = reader.GetPageSizeWithRotation(1);
+                    float w = pageRect.Width;
+                    float h = pageRect.Height;
+
+                    // Strategy A: region-based LocationTextExtractionStrategy
+                    var topRight = new iTextSharp.text.Rectangle(w * 0.55f, h * 0.75f, w, h);
+                    string topText = ExtractRegion(reader, 1, topRight);
+
+                    var bottomRect = new iTextSharp.text.Rectangle(0, 0, w, h * 0.15f);
+                    string botText = ExtractRegion(reader, 1, bottomRect);
+
+                    Match mDate = Regex.Match(botText + " " + topText,
+                        @"\b(\d{2}[/\.]\d{2}[/\.]\d{4})\b");
+                    if (mDate.Success)
+                        date = mDate.Groups[1].Value.Replace(".", "/").Replace("/", "-");
+
+                    ParseVehicleAndTest(topText, out vehicleNum, out testNum);
+
+                    // Strategy B: raw content stream fallback
+                    if (vehicleNum == null || testNum == null || date == null)
+                    {
+                        string raw = DecodeRawContent(reader.GetPageContent(1));
+                        if (date == null)
+                        {
+                            Match m2 = Regex.Match(raw, @"\b(\d{2}[/\.]\d{2}[/\.]\d{4})\b");
+                            if (m2.Success)
+                                date = m2.Groups[1].Value.Replace(".", "/").Replace("/", "-");
+                        }
+                        if (vehicleNum == null || testNum == null)
+                        {
+                            string v2, t2;
+                            ParseVehicleAndTest(raw, out v2, out t2);
+                            if (vehicleNum == null) vehicleNum = v2;
+                            if (testNum    == null) testNum    = t2;
+                        }
+                    }
+                }
+            }
+            catch { /* fields stay null → dialog shows empty */ }
+        }
+
+        private string ExtractRegion(iTextSharp.text.pdf.PdfReader reader,
+            int page, iTextSharp.text.Rectangle region)
+        {
+            try
+            {
+                var filter = new iTextSharp.text.pdf.parser.RegionTextRenderFilter(region);
+                var strategy = new iTextSharp.text.pdf.parser.FilteredTextRenderListener(
+                    new iTextSharp.text.pdf.parser.LocationTextExtractionStrategy(), filter);
+                return iTextSharp.text.pdf.parser.PdfTextExtractor
+                    .GetTextFromPage(reader, page, strategy) ?? "";
+            }
+            catch { return ""; }
+        }
+
+        private void ParseVehicleAndTest(string text,
+            out string vehicleNum, out string testNum)
+        {
+            vehicleNum = null; testNum = null;
+            var seen = new System.Collections.Generic.List<string>();
+            foreach (Match m in Regex.Matches(text, @"\b(\d{4,8})\b"))
+                if (!seen.Contains(m.Groups[1].Value))
+                    seen.Add(m.Groups[1].Value);
+
+            // Remove year-like numbers (19xx / 20xx)
+            seen.RemoveAll(n => Regex.IsMatch(n, @"^(19|20)\d{2}$"));
+
+            // Longest = vehicle number, next = test number
+            seen.Sort((a, b) => b.Length.CompareTo(a.Length));
+            if (seen.Count >= 1) vehicleNum = seen[0];
+            if (seen.Count >= 2) testNum    = seen[1];
+        }
+
+        private string DecodeRawContent(byte[] raw)
+        {
+            if (raw == null) return "";
+            string ascii = System.Text.Encoding.ASCII.GetString(raw);
+            var sb = new StringBuilder();
+            // Literal strings: (content)
+            foreach (Match m in Regex.Matches(ascii, @"\(([^\)]{1,80})\)"))
+                sb.Append(m.Groups[1].Value).Append(' ');
+            // Hex strings: <HEXHEX>
+            foreach (Match m in Regex.Matches(ascii, @"<([0-9A-Fa-f]{2,160})>"))
+            {
+                string hex = m.Groups[1].Value;
+                if (hex.Length % 2 != 0) continue;
+                var bytes = new byte[hex.Length / 2];
+                bool ok = true;
+                for (int i = 0; i < bytes.Length; i++)
+                {
+                    try { bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16); }
+                    catch { ok = false; break; }
+                }
+                if (ok) sb.Append(System.Text.Encoding.ASCII.GetString(bytes)).Append(' ');
+            }
+            return sb.ToString();
         }
     }
 }
