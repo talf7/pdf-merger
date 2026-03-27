@@ -2,6 +2,8 @@ using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.IO;
+using System.Text;
+using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using PdfSharp.Pdf;
 using PdfSharp.Pdf.IO;
@@ -266,11 +268,13 @@ namespace PdfMerger
         {
             if (_pdfFiles.Count < 2 || OutputFolder == null) return;
 
-            string firstName = Path.GetFileNameWithoutExtension(_pdfFiles[0]);
-            int counter = Properties.Settings.Default.TestCounter;
-            string date = DateTime.Now.ToString("dd-MM-yyyy");
-            string outputFile = Path.Combine(OutputFolder,
-                string.Format("{0}_{1}_{2}.pdf", firstName, counter, date));
+            string vehicleNum, testNum, inspDate;
+            ExtractPdfFields(_pdfFiles[0], out vehicleNum, out testNum, out inspDate);
+            string vehiclePart = vehicleNum ?? Path.GetFileNameWithoutExtension(_pdfFiles[0]);
+            string testPart    = testNum    ?? Properties.Settings.Default.TestCounter.ToString();
+            string datePart    = inspDate   ?? DateTime.Now.ToString("dd-MM-yyyy");
+            string outputFile  = Path.Combine(OutputFolder,
+                string.Format("{0}_{1}_{2}.pdf", vehiclePart, testPart, datePart));
 
             try
             {
@@ -289,9 +293,6 @@ namespace PdfMerger
                     }
                     output.Save(outputFile);
                 }
-
-                Properties.Settings.Default.TestCounter = counter + 1;
-                Properties.Settings.Default.Save();
 
                 _pdfFiles.Clear();
                 UpdateUI();
@@ -316,6 +317,33 @@ namespace PdfMerger
                 btnMerge.Text = "מזג PDF'ים";
                 UpdateMergeButton();
             }
+        }
+
+        private void ExtractPdfFields(string pdfPath, out string vehicleNum, out string testNum, out string date)
+        {
+            vehicleNum = null;
+            testNum    = null;
+            date       = null;
+            try
+            {
+                using (var reader = new iTextSharp.text.pdf.PdfReader(pdfPath))
+                {
+                    var sb = new StringBuilder();
+                    for (int p = 1; p <= reader.NumberOfPages; p++)
+                        sb.AppendLine(iTextSharp.text.pdf.parser.PdfTextExtractor.GetTextFromPage(reader, p));
+                    string text = sb.ToString();
+
+                    Match m = Regex.Match(text, @"מספר\s+רכב[:\s]+(\d{5,10})");
+                    if (m.Success) vehicleNum = m.Groups[1].Value;
+
+                    m = Regex.Match(text, @"מס['\u2019]?\s*בדיקה[:\s]+(\d{4,8})");
+                    if (m.Success) testNum = m.Groups[1].Value;
+
+                    m = Regex.Match(text, @"בתאריך[:\s]+(\d{2}/\d{2}/\d{4})");
+                    if (m.Success) date = m.Groups[1].Value.Replace("/", "-");
+                }
+            }
+            catch { /* fallback values used in caller */ }
         }
     }
 }
