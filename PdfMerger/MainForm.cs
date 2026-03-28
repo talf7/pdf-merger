@@ -397,8 +397,11 @@ namespace PdfMerger
 
                     int fw = fullBmp.Width, fh = fullBmp.Height;
 
-                    // Top 40% scaled 2x → vehicle + test number
-                    var topRect = new System.Drawing.Rectangle(0, 0, fw, (int)(fh * 0.40));
+                    // Right 55%, top 15% scaled 2x → vehicle + test number
+                    // (RTL form: test/vehicle numbers are top-right; km/engine are top-left)
+                    int topH = (int)(fh * 0.15);
+                    int rightX = (int)(fw * 0.45);
+                    var topRect = new System.Drawing.Rectangle(rightX, 0, fw - rightX, topH);
                     using (var crop = fullBmp.Clone(topRect, fullBmp.PixelFormat))
                     {
                         var scaled = new System.Drawing.Bitmap(crop.Width * 2, crop.Height * 2);
