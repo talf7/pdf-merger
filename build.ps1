@@ -5,9 +5,11 @@ $ScriptDir      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectDir     = Join-Path $ScriptDir "PdfMerger"
 $DistDir        = Join-Path $ScriptDir "dist"
 $PkgDir         = Join-Path $ScriptDir ".packages"
-$PdfSharpDll    = Join-Path $PkgDir "PdfSharp.dll"
-$iTextSharpDll  = Join-Path $PkgDir "iTextSharp.dll"
-$BouncyCastleDll= Join-Path $PkgDir "BouncyCastle.Crypto.dll"
+$PdfSharpDll     = Join-Path $PkgDir "PdfSharp.dll"
+$iTextSharpDll   = Join-Path $PkgDir "iTextSharp.dll"
+$BouncyCastleDll = Join-Path $PkgDir "BouncyCastle.Crypto.dll"
+$PdfiumViewerDll = Join-Path $PkgDir "PdfiumViewer.dll"
+$PdfiumNativeDll = Join-Path $PkgDir "pdfium.dll"
 
 Write-Host ""
 Write-Host "=== PDF Merger - Build Script ===" -ForegroundColor Cyan
@@ -70,9 +72,34 @@ function Get-NugetDll {
 
 # ── 2. Download dependencies ──────────────────────────────────────────────────
 Write-Host "[1/3] Checking dependencies..." -ForegroundColor Yellow
-Get-NugetDll -PackageId "PdfSharp"    -Version "1.50.5147" -DestDll $PdfSharpDll    -PreferPath "net4"
+Get-NugetDll -PackageId "PdfSharp"    -Version "1.50.5147" -DestDll $PdfSharpDll    -PreferPath "net20[/\\]PdfSharp\.dll"
 Get-NugetDll -PackageId "iTextSharp"  -Version "5.5.13.3"  -DestDll $iTextSharpDll  -PreferPath "net40"
 Get-NugetDll -PackageId "BouncyCastle" -Version "1.8.9"    -DestDll $BouncyCastleDll -PreferPath "net40"
+# PdfiumViewer 2.2.0 — contains pdfium.dll inside (content/x64/)
+if (-not (Test-Path $PdfiumViewerDll) -or -not (Test-Path $PdfiumNativeDll)) {
+    Write-Host "    Downloading PdfiumViewer 2.2.0..." -ForegroundColor Yellow
+    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    $nupkg    = Join-Path $PkgDir "pdfiumviewer.zip"
+    $extracted = Join-Path $PkgDir "PdfiumViewer_pkg"
+    if (-not (Test-Path $nupkg)) {
+        Invoke-WebRequest "https://www.nuget.org/api/v2/package/PdfiumViewer/2.2.0" `
+            -OutFile $nupkg -UseBasicParsing
+    }
+    Expand-Archive $nupkg -DestinationPath $extracted -Force
+    # Managed DLL (net20 is compatible with .NET 4.x)
+    if (-not (Test-Path $PdfiumViewerDll)) {
+        $mgd = Join-Path $extracted "lib\net20\PdfiumViewer.dll"
+        if (Test-Path $mgd) { Copy-Item $mgd $PdfiumViewerDll }
+    }
+    # Native pdfium.dll (x64)
+    if (-not (Test-Path $PdfiumNativeDll)) {
+        $native = Join-Path $extracted "content\x64\pdfium.dll"
+        if (Test-Path $native) { Copy-Item $native $PdfiumNativeDll }
+    }
+    Write-Host "    PdfiumViewer downloaded OK." -ForegroundColor Green
+} else {
+    Write-Host "    PdfiumViewer already cached." -ForegroundColor Green
+}
 
 # ── 3. Compile ────────────────────────────────────────────────────────────────
 Write-Host "[2/3] Compiling..." -ForegroundColor Yellow
@@ -106,7 +133,8 @@ $refs = @(
     "Microsoft.CSharp.dll",
     "`"$PdfSharpDll`"",
     "`"$iTextSharpDll`"",
-    "`"$BouncyCastleDll`""
+    "`"$BouncyCastleDll`"",
+    "`"$PdfiumViewerDll`""
 )
 
 $refArgs  = $refs | ForEach-Object { "/r:$_" }
@@ -136,9 +164,13 @@ if ($proc.ExitCode -ne 0) {
 Write-Host "    Compiled OK." -ForegroundColor Green
 
 # ── 4. Copy runtime files ─────────────────────────────────────────────────────
-Copy-Item $PdfSharpDll    "$DistDir\PdfSharp.dll"
-Copy-Item $iTextSharpDll  "$DistDir\itextsharp.dll"
+Copy-Item $PdfSharpDll     "$DistDir\PdfSharp.dll"
+Copy-Item $iTextSharpDll   "$DistDir\itextsharp.dll"
 Copy-Item $BouncyCastleDll "$DistDir\BouncyCastle.Crypto.dll"
+Copy-Item $PdfiumViewerDll "$DistDir\PdfiumViewer.dll"
+if (Test-Path $PdfiumNativeDll) {
+    Copy-Item $PdfiumNativeDll "$DistDir\pdfium.dll"
+}
 Copy-Item "$ProjectDir\app.config" "$DistDir\PdfMerger.exe.config"
 
 # ── 5. Done ───────────────────────────────────────────────────────────────────
