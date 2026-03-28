@@ -411,10 +411,19 @@ namespace PdfMerger
                         scaled.Dispose();
                     }
 
-                    // Bottom 20% → date
-                    var botRect = new System.Drawing.Rectangle(0, (int)(fh * 0.80), fw, (int)(fh * 0.20));
+                    // Bottom 30% scaled 2x → date area (date is in lower body paragraph)
+                    var botRect = new System.Drawing.Rectangle(0, (int)(fh * 0.65), fw, (int)(fh * 0.30));
                     using (var crop = fullBmp.Clone(botRect, fullBmp.PixelFormat))
-                        crop.Save(tempBot, System.Drawing.Imaging.ImageFormat.Png);
+                    {
+                        var scaled = new System.Drawing.Bitmap(crop.Width * 2, crop.Height * 2);
+                        using (var g = System.Drawing.Graphics.FromImage(scaled))
+                        {
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(crop, 0, 0, scaled.Width, scaled.Height);
+                        }
+                        scaled.Save(tempBot, System.Drawing.Imaging.ImageFormat.Png);
+                        scaled.Dispose();
+                    }
                 }
                 finally { if (fullBmp != null) fullBmp.Dispose(); }
 
@@ -440,12 +449,14 @@ namespace PdfMerger
                 if (seen.Count >= 1) vehicleNum = seen[0];
                 if (seen.Count >= 2) testNum    = seen[1];
 
-                // OCR bottom → date
+                // OCR bottom → date (try standard format first)
                 string botText = OcrImage(tempBot);
-                string botNorm = botText.Replace("I", "/").Replace("l", "/").Replace("O", "0");
-                Match dm = Regex.Match(botNorm, @"\b(\d{2}[/\.\-]\d{2}[/\.\-]\d{4})\b");
+                // OCR often reads "/" as "," or " " — match all common separators
+                Match dm = Regex.Match(botText,
+                    @"\b(\d{2})\s*[/\.\-,]\s*(\d{2})\s*[/\.\-,]\s*(20\d{2})\b");
                 if (dm.Success)
-                    date = dm.Groups[1].Value.Replace(".", "-").Replace("/", "-");
+                    date = dm.Groups[1].Value + "-" + dm.Groups[2].Value + "-" + dm.Groups[3].Value;
+
             }
             catch (Exception ex)
             {
