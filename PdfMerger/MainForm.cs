@@ -275,6 +275,7 @@ namespace PdfMerger
             if (!ShowFieldsDialog(initVehicle, initTest, initDate,
                     out vehicleNum, out testNum, out inspDate))
                 return;
+
             string outputFile = Path.Combine(OutputFolder,
                 string.Format("{0}_{1}_{2}.pdf", vehicleNum, testNum, inspDate));
 
@@ -375,7 +376,9 @@ namespace PdfMerger
             return true;
         }
 
-        // ── PDF Field Extraction ───────────────────────────────────────────────
+        // ── PDF Field Extraction ──────────────────────────────────────────────
+
+        // ── PDF Field Extraction via OCR ──────────────────────────────────────
 
         private void ExtractPdfFields(string pdfPath,
             out string vehicleNum, out string testNum, out string date)
@@ -383,104 +386,121 @@ namespace PdfMerger
             vehicleNum = null; testNum = null; date = null;
             try
             {
-                using (var reader = new iTextSharp.text.pdf.PdfReader(pdfPath))
+                string tempTop = Path.Combine(Path.GetTempPath(), "pdf_ocr_top.png");
+                string tempBot = Path.Combine(Path.GetTempPath(), "pdf_ocr_bot.png");
+
+                System.Drawing.Bitmap fullBmp = null;
+                try
                 {
-                    var pageRect = reader.GetPageSizeWithRotation(1);
-                    float w = pageRect.Width;
-                    float h = pageRect.Height;
+                    using (var doc = PdfiumViewer.PdfDocument.Load(pdfPath))
+                        fullBmp = (System.Drawing.Bitmap)doc.Render(0, 1748, 2480, false);
 
-                    // Strategy A: region-based LocationTextExtractionStrategy
-                    var topRight = new iTextSharp.text.Rectangle(w * 0.55f, h * 0.75f, w, h);
-                    string topText = ExtractRegion(reader, 1, topRight);
+                    int fw = fullBmp.Width, fh = fullBmp.Height;
 
-                    var bottomRect = new iTextSharp.text.Rectangle(0, 0, w, h * 0.15f);
-                    string botText = ExtractRegion(reader, 1, bottomRect);
-
-                    Match mDate = Regex.Match(botText + " " + topText,
-                        @"\b(\d{2}[/\.]\d{2}[/\.]\d{4})\b");
-                    if (mDate.Success)
-                        date = mDate.Groups[1].Value.Replace(".", "/").Replace("/", "-");
-
-                    ParseVehicleAndTest(topText, out vehicleNum, out testNum);
-
-                    // Strategy B: raw content stream fallback
-                    if (vehicleNum == null || testNum == null || date == null)
+                    // Top 40% scaled 2x → vehicle + test number
+                    var topRect = new System.Drawing.Rectangle(0, 0, fw, (int)(fh * 0.40));
+                    using (var crop = fullBmp.Clone(topRect, fullBmp.PixelFormat))
                     {
-                        string raw = DecodeRawContent(reader.GetPageContent(1));
-                        if (date == null)
+                        var scaled = new System.Drawing.Bitmap(crop.Width * 2, crop.Height * 2);
+                        using (var g = System.Drawing.Graphics.FromImage(scaled))
                         {
-                            Match m2 = Regex.Match(raw, @"\b(\d{2}[/\.]\d{2}[/\.]\d{4})\b");
-                            if (m2.Success)
-                                date = m2.Groups[1].Value.Replace(".", "/").Replace("/", "-");
+                            g.InterpolationMode = System.Drawing.Drawing2D.InterpolationMode.HighQualityBicubic;
+                            g.DrawImage(crop, 0, 0, scaled.Width, scaled.Height);
                         }
-                        if (vehicleNum == null || testNum == null)
-                        {
-                            string v2, t2;
-                            ParseVehicleAndTest(raw, out v2, out t2);
-                            if (vehicleNum == null) vehicleNum = v2;
-                            if (testNum    == null) testNum    = t2;
-                        }
+                        scaled.Save(tempTop, System.Drawing.Imaging.ImageFormat.Png);
+                        scaled.Dispose();
                     }
+
+                    // Bottom 20% → date
+                    var botRect = new System.Drawing.Rectangle(0, (int)(fh * 0.80), fw, (int)(fh * 0.20));
+                    using (var crop = fullBmp.Clone(botRect, fullBmp.PixelFormat))
+                        crop.Save(tempBot, System.Drawing.Imaging.ImageFormat.Png);
                 }
-            }
-            catch { /* fields stay null → dialog shows empty */ }
-        }
+                finally { if (fullBmp != null) fullBmp.Dispose(); }
 
-        private string ExtractRegion(iTextSharp.text.pdf.PdfReader reader,
-            int page, iTextSharp.text.Rectangle region)
-        {
-            try
-            {
-                var filter = new iTextSharp.text.pdf.parser.RegionTextRenderFilter(region);
-                var strategy = new iTextSharp.text.pdf.parser.FilteredTextRenderListener(
-                    new iTextSharp.text.pdf.parser.LocationTextExtractionStrategy(), filter);
-                return iTextSharp.text.pdf.parser.PdfTextExtractor
-                    .GetTextFromPage(reader, page, strategy) ?? "";
-            }
-            catch { return ""; }
-        }
+                // OCR top → numbers
+                string topText = OcrImage(tempTop);
+                // Join split numbers (e.g. "44 4444" → "444444")
+                string topNorm = Regex.Replace(topText, @"\b(\d{2,4})\s+(\d{2,4})\b", "$1$2");
 
-        private void ParseVehicleAndTest(string text,
-            out string vehicleNum, out string testNum)
-        {
-            vehicleNum = null; testNum = null;
-            var seen = new System.Collections.Generic.List<string>();
-            foreach (Match m in Regex.Matches(text, @"\b(\d{4,8})\b"))
-                if (!seen.Contains(m.Groups[1].Value))
-                    seen.Add(m.Groups[1].Value);
+                // Detect and exclude phone numbers (Israeli prefix: 0x-xxxxxxx)
+                var phoneNums = new System.Collections.Generic.HashSet<string>();
+                foreach (Match pm in Regex.Matches(topNorm, @"\b0\d[\-\s]?(\d{6,8})\b"))
+                    phoneNums.Add(pm.Groups[1].Value);
 
-            // Remove year-like numbers (19xx / 20xx)
-            seen.RemoveAll(n => Regex.IsMatch(n, @"^(19|20)\d{2}$"));
-
-            // Longest = vehicle number, next = test number
-            seen.Sort((a, b) => b.Length.CompareTo(a.Length));
-            if (seen.Count >= 1) vehicleNum = seen[0];
-            if (seen.Count >= 2) testNum    = seen[1];
-        }
-
-        private string DecodeRawContent(byte[] raw)
-        {
-            if (raw == null) return "";
-            string ascii = System.Text.Encoding.ASCII.GetString(raw);
-            var sb = new StringBuilder();
-            // Literal strings: (content)
-            foreach (Match m in Regex.Matches(ascii, @"\(([^\)]{1,80})\)"))
-                sb.Append(m.Groups[1].Value).Append(' ');
-            // Hex strings: <HEXHEX>
-            foreach (Match m in Regex.Matches(ascii, @"<([0-9A-Fa-f]{2,160})>"))
-            {
-                string hex = m.Groups[1].Value;
-                if (hex.Length % 2 != 0) continue;
-                var bytes = new byte[hex.Length / 2];
-                bool ok = true;
-                for (int i = 0; i < bytes.Length; i++)
+                var seen = new List<string>();
+                foreach (Match m in Regex.Matches(topNorm, @"\b(\d{4,8})\b"))
                 {
-                    try { bytes[i] = Convert.ToByte(hex.Substring(i * 2, 2), 16); }
-                    catch { ok = false; break; }
+                    string v = m.Groups[1].Value;
+                    if (Regex.IsMatch(v, @"^(19|20)\d{2}$")) continue; // skip years
+                    if (phoneNums.Contains(v)) continue;                 // skip phone numbers
+                    if (!seen.Contains(v)) seen.Add(v);
                 }
-                if (ok) sb.Append(System.Text.Encoding.ASCII.GetString(bytes)).Append(' ');
+                seen.Sort((a, b) => b.Length.CompareTo(a.Length));
+                if (seen.Count >= 1) vehicleNum = seen[0];
+                if (seen.Count >= 2) testNum    = seen[1];
+
+                // OCR bottom → date
+                string botText = OcrImage(tempBot);
+                string botNorm = botText.Replace("I", "/").Replace("l", "/").Replace("O", "0");
+                Match dm = Regex.Match(botNorm, @"\b(\d{2}[/\.\-]\d{2}[/\.\-]\d{4})\b");
+                if (dm.Success)
+                    date = dm.Groups[1].Value.Replace(".", "-").Replace("/", "-");
             }
-            return sb.ToString();
+            catch (Exception ex)
+            {
+                File.WriteAllText(Path.Combine(Path.GetTempPath(), "ocr_top.txt"), "EXCEPTION: " + ex, Encoding.UTF8);
+            }
         }
+
+        private string OcrImage(string imagePath)
+        {
+            string tempScript = Path.Combine(Path.GetTempPath(), "pdf_ocr.ps1");
+            File.WriteAllText(tempScript, OcrPowerShellScript, Encoding.UTF8);
+
+            var psi = new System.Diagnostics.ProcessStartInfo("powershell.exe",
+                string.Format("-NoProfile -ExecutionPolicy Bypass -File \"{0}\" \"{1}\"",
+                    tempScript, imagePath));
+            psi.RedirectStandardOutput = true;
+            psi.UseShellExecute = false;
+            psi.CreateNoWindow  = true;
+
+            var proc = System.Diagnostics.Process.Start(psi);
+            string text = proc.StandardOutput.ReadToEnd();
+            proc.WaitForExit();
+            return text ?? "";
+        }
+
+        private const string OcrPowerShellScript = @"
+param($imagePath)
+$null = [System.Reflection.Assembly]::LoadWithPartialName('System.Runtime.WindowsRuntime')
+[Windows.Media.Ocr.OcrEngine,           Windows.Media.Ocr,        ContentType=WindowsRuntime] | Out-Null
+[Windows.Graphics.Imaging.BitmapDecoder, Windows.Graphics.Imaging, ContentType=WindowsRuntime] | Out-Null
+[Windows.Storage.StorageFile,            Windows.Storage,          ContentType=WindowsRuntime] | Out-Null
+[Windows.Globalization.Language,         Windows.Globalization,    ContentType=WindowsRuntime] | Out-Null
+
+$asTaskG = ([System.WindowsRuntimeSystemExtensions].GetMethods() |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.GetParameters().Count -eq 1 -and
+        $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation`1' })[0]
+
+function Await($t, $r) {
+    $task = $asTaskG.MakeGenericMethod($r).Invoke($null, @($t))
+    $task.Wait(-1) | Out-Null; $task.Result
+}
+
+$file    = Await ([Windows.Storage.StorageFile]::GetFileFromPathAsync($imagePath)) ([Windows.Storage.StorageFile])
+$stream  = Await ($file.OpenAsync([Windows.Storage.FileAccessMode]::Read)) ([Windows.Storage.Streams.IRandomAccessStream])
+$decoder = Await ([Windows.Graphics.Imaging.BitmapDecoder]::CreateAsync($stream)) ([Windows.Graphics.Imaging.BitmapDecoder])
+$bitmap  = Await ($decoder.GetSoftwareBitmapAsync()) ([Windows.Graphics.Imaging.SoftwareBitmap])
+
+$engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromUserProfileLanguages()
+if ($engine -eq $null) {
+    $engine = [Windows.Media.Ocr.OcrEngine]::TryCreateFromLanguage(
+        [Windows.Globalization.Language]::new('en-US'))
+}
+$result = Await ($engine.RecognizeAsync($bitmap)) ([Windows.Media.Ocr.OcrResult])
+Write-Output $result.Text
+";
+
     }
 }
