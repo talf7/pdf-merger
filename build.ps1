@@ -108,7 +108,7 @@ $refs = @(
     "Microsoft.CSharp.dll",
     "`"$PdfSharpDll`"",
     "`"$iTextSharpDll`"",
-    "`"$BouncyCastleDll`"",
+    "`"$BouncyCastleDll`""
 )
 
 $refArgs  = $refs | ForEach-Object { "/r:$_" }
