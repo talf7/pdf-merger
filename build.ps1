@@ -106,7 +106,6 @@ $refs = @(
     "System.Configuration.dll",
     "System.Xml.dll",
     "Microsoft.CSharp.dll",
-    "`"$PdfSharpDll`"",
     "`"$iTextSharpDll`"",
     "`"$BouncyCastleDll`""
 )

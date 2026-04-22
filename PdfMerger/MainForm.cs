@@ -5,8 +5,7 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
-using PdfSharp.Pdf;
-using PdfSharp.Pdf.IO;
+using iTextSharp.text.pdf;
 
 namespace PdfMerger
 {
@@ -276,17 +275,21 @@ namespace PdfMerger
                 btnMerge.Enabled = false;
                 btnMerge.Text = "ממזג...";
 
-                using (var output = new PdfDocument())
+                using (var stream = new FileStream(outputFile, FileMode.Create))
+                using (var doc = new iTextSharp.text.Document())
+                using (var copy = new PdfSmartCopy(doc, stream))
                 {
+                    copy.SetFullCompression();
+                    doc.Open();
                     foreach (string path in _pdfFiles)
                     {
-                        using (var input = PdfReader.Open(path, PdfDocumentOpenMode.Import))
+                        using (var reader = new PdfReader(path))
                         {
-                            for (int i = 0; i < input.PageCount; i++)
-                                output.AddPage(input.Pages[i]);
+                            reader.ConsolidateNamedDestinations();
+                            for (int i = 1; i <= reader.NumberOfPages; i++)
+                                copy.AddPage(copy.GetImportedPage(reader, i));
                         }
                     }
-                    output.Save(outputFile);
                 }
 
                 _pdfFiles.Clear();
