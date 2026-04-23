@@ -5,7 +5,6 @@ using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Windows.Forms;
-using iTextSharp.text;
 using iTextSharp.text.pdf;
 
 namespace PdfMerger
@@ -292,7 +291,7 @@ namespace PdfMerger
                     System.Drawing.Imaging.Encoder.Quality, 95L);
 
                 // Render every page from every input PDF to JPEG
-                var pages = new List<(float pdfW, float pdfH, byte[] jpeg)>();
+                var pages = new List<Tuple<float, float, byte[]>>();
                 foreach (string path in _pdfFiles)
                 {
                     using (var srcDoc = PdfiumViewer.PdfDocument.Load(path))
@@ -307,23 +306,25 @@ namespace PdfMerger
                             using (var ms = new MemoryStream())
                             {
                                 bmp.Save(ms, jpegCodec, encParams);
-                                pages.Add(((float)sz.Width, (float)sz.Height, ms.ToArray()));
+                                pages.Add(Tuple.Create((float)sz.Width, (float)sz.Height, ms.ToArray()));
                             }
                         }
                     }
                 }
 
                 // Build output PDF — one image per page, no fonts needed
-                var firstPageRect = new iTextSharp.text.Rectangle(pages[0].pdfW, pages[0].pdfH);
+                var firstPageRect = new iTextSharp.text.Rectangle(pages[0].Item1, pages[0].Item2);
                 using (var outStream = new FileStream(outputFile, FileMode.Create, FileAccess.Write))
                 {
-                    var iDoc = new Document(firstPageRect, 0, 0, 0, 0);
+                    var iDoc = new iTextSharp.text.Document(firstPageRect, 0, 0, 0, 0);
                     var writer = PdfWriter.GetInstance(iDoc, outStream);
                     iDoc.Open();
 
                     for (int p = 0; p < pages.Count; p++)
                     {
-                        var (pdfW, pdfH, jpeg) = pages[p];
+                        float pdfW = pages[p].Item1;
+                        float pdfH = pages[p].Item2;
+                        byte[] jpeg = pages[p].Item3;
 
                         if (p > 0)
                         {
@@ -331,7 +332,7 @@ namespace PdfMerger
                             iDoc.NewPage();
                         }
 
-                        var img = iTextSharp.text.Image.GetInstance(jpeg);
+                        iTextSharp.text.Image img = iTextSharp.text.Image.GetInstance(jpeg);
                         img.SetAbsolutePosition(0, 0);
                         img.ScaleAbsolute(pdfW, pdfH);
                         writer.DirectContent.AddImage(img);
