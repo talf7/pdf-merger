@@ -7,7 +7,6 @@ using System.Text.RegularExpressions;
 using System.Windows.Forms;
 using iTextSharp.text;
 using iTextSharp.text.pdf;
-using Microsoft.Win32;
 
 namespace PdfMerger
 {
@@ -285,25 +284,61 @@ namespace PdfMerger
                 btnMerge.Enabled = false;
                 btnMerge.Text = "ממזג...";
 
-                byte[] mergedBytes;
-                using (var ms = new MemoryStream())
+                const int RenderDpi = 200;
+                var jpegCodec = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders()
+                    .First(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
+                var encParams = new System.Drawing.Imaging.EncoderParameters(1);
+                encParams.Param[0] = new System.Drawing.Imaging.EncoderParameter(
+                    System.Drawing.Imaging.Encoder.Quality, 95L);
+
+                // Render every page from every input PDF to JPEG
+                var pages = new List<(float pdfW, float pdfH, byte[] jpeg)>();
+                foreach (string path in _pdfFiles)
                 {
-                    using (var doc = new Document())
+                    using (var srcDoc = PdfiumViewer.PdfDocument.Load(path))
                     {
-                        var copy = new PdfSmartCopy(doc, ms);
-                        copy.CloseStream = false;
-                        doc.Open();
-                        foreach (string path in _pdfFiles)
+                        for (int i = 0; i < srcDoc.PageCount; i++)
                         {
-                            var reader = new PdfReader(path);
-                            try   { copy.AddDocument(reader); }
-                            finally { reader.Close(); }
+                            var sz = srcDoc.PageSizes[i];
+                            int renderW = (int)Math.Round(sz.Width  / 72.0 * RenderDpi);
+                            int renderH = (int)Math.Round(sz.Height / 72.0 * RenderDpi);
+
+                            using (var bmp = (System.Drawing.Bitmap)srcDoc.Render(i, renderW, renderH, false))
+                            using (var ms = new MemoryStream())
+                            {
+                                bmp.Save(ms, jpegCodec, encParams);
+                                pages.Add(((float)sz.Width, (float)sz.Height, ms.ToArray()));
+                            }
                         }
                     }
-                    mergedBytes = ms.ToArray();
                 }
 
-                EmbedFonts(mergedBytes, outputFile);
+                // Build output PDF — one image per page, no fonts needed
+                var firstPageRect = new iTextSharp.text.Rectangle(pages[0].pdfW, pages[0].pdfH);
+                using (var outStream = new FileStream(outputFile, FileMode.Create, FileAccess.Write))
+                {
+                    var iDoc = new Document(firstPageRect, 0, 0, 0, 0);
+                    var writer = PdfWriter.GetInstance(iDoc, outStream);
+                    iDoc.Open();
+
+                    for (int p = 0; p < pages.Count; p++)
+                    {
+                        var (pdfW, pdfH, jpeg) = pages[p];
+
+                        if (p > 0)
+                        {
+                            iDoc.SetPageSize(new iTextSharp.text.Rectangle(pdfW, pdfH));
+                            iDoc.NewPage();
+                        }
+
+                        var img = iTextSharp.text.Image.GetInstance(jpeg);
+                        img.SetAbsolutePosition(0, 0);
+                        img.ScaleAbsolute(pdfW, pdfH);
+                        writer.DirectContent.AddImage(img);
+                    }
+
+                    iDoc.Close();
+                }
 
                 _pdfFiles.Clear();
                 UpdateUI();
@@ -328,128 +363,6 @@ namespace PdfMerger
                 btnMerge.Text = "מזג PDF'ים";
                 UpdateMergeButton();
             }
-        }
-
-        private void EmbedFonts(byte[] pdfBytes, string outputPath)
-        {
-            var fontFileLookup = BuildWindowsFontLookup();
-
-            using (var reader = new PdfReader(pdfBytes))
-            using (var outStream = new FileStream(outputPath, FileMode.Create, FileAccess.Write))
-            using (var stamper = new PdfStamper(reader, outStream))
-            {
-                int xrefSize = reader.XrefSize;
-                for (int objNum = 1; objNum < xrefSize; objNum++)
-                {
-                    PdfObject obj = reader.GetPdfObject(objNum);
-                    if (obj == null || !obj.IsDictionary()) continue;
-                    var dict = (PdfDictionary)obj;
-
-                    PdfName type = dict.GetAsName(PdfName.TYPE);
-                    if (type == null || !PdfName.FONTDESCRIPTOR.Equals(type)) continue;
-
-                    if (dict.Get(PdfName.FONTFILE)  != null) continue;
-                    if (dict.Get(PdfName.FONTFILE2) != null) continue;
-                    if (dict.Get(PdfName.FONTFILE3) != null) continue;
-
-                    PdfName psNameObj = dict.GetAsName(PdfName.FONTNAME);
-                    if (psNameObj == null) continue;
-                    string psName = psNameObj.ToString().TrimStart('/');
-
-                    if (psName.Length > 7 && psName[6] == '+' &&
-                        Regex.IsMatch(psName.Substring(0, 6), "^[A-Z]{6}$"))
-                        psName = psName.Substring(7);
-
-                    string fontFilePath = ResolveFontFile(psName, fontFileLookup);
-                    if (fontFilePath == null) continue;
-
-                    // Skip TTC collections — need an index, handle plain TTF/OTF only
-                    if (fontFilePath.EndsWith(".ttc", StringComparison.OrdinalIgnoreCase)) continue;
-
-                    byte[] fontData;
-                    try { fontData = File.ReadAllBytes(fontFilePath); }
-                    catch { continue; }
-                    if (fontData == null || fontData.Length == 0) continue;
-
-                    // OpenType/CFF starts with "OTTO" magic bytes
-                    bool isOpenType = fontData.Length >= 4 &&
-                                      fontData[0] == 0x4F && fontData[1] == 0x54 &&
-                                      fontData[2] == 0x54 && fontData[3] == 0x4F;
-
-                    var fontStream = new PRStream(reader, fontData);
-                    fontStream.Put(PdfName.LENGTH1, new PdfNumber(fontData.Length));
-                    fontStream.SetCompressionLevel(9);
-
-                    PdfName fontFileKey;
-                    if (isOpenType)
-                    {
-                        fontStream.Put(PdfName.SUBTYPE, new PdfName("OpenType"));
-                        fontFileKey = PdfName.FONTFILE3;
-                    }
-                    else
-                    {
-                        fontFileKey = PdfName.FONTFILE2;
-                    }
-
-                    PdfIndirectObject fontStreamRef = stamper.Writer.AddToBody(fontStream);
-                    dict.Put(fontFileKey, fontStreamRef.IndirectReference);
-                }
-            }
-        }
-
-        private Dictionary<string, string> BuildWindowsFontLookup()
-        {
-            var lookup = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
-            const string regKey = @"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts";
-
-            using (var key = Registry.LocalMachine.OpenSubKey(regKey))
-            {
-                if (key == null) return lookup;
-                string fontsDir = Environment.GetFolderPath(Environment.SpecialFolder.Fonts);
-
-                foreach (string valueName in key.GetValueNames())
-                {
-                    string fontFile = key.GetValue(valueName) as string;
-                    if (string.IsNullOrEmpty(fontFile)) continue;
-
-                    string fullPath = Path.IsPathRooted(fontFile)
-                        ? fontFile
-                        : Path.Combine(fontsDir, fontFile);
-
-                    if (!File.Exists(fullPath)) continue;
-
-                    string bareName = Path.GetFileName(fullPath);
-                    if (!lookup.ContainsKey(bareName))  lookup[bareName]  = fullPath;
-                    if (!lookup.ContainsKey(valueName)) lookup[valueName] = fullPath;
-                }
-            }
-            return lookup;
-        }
-
-        private string ResolveFontFile(string psName, Dictionary<string, string> lookup)
-        {
-            if (string.IsNullOrEmpty(psName)) return null;
-
-            foreach (string ext in new[] { ".ttf", ".otf", ".ttc" })
-            {
-                if (lookup.TryGetValue(psName + ext, out string p)) return p;
-            }
-
-            string normalized = psName.Replace("-", " ").Replace(",", " ");
-            foreach (string ext in new[] { ".ttf", ".otf", ".ttc" })
-            {
-                if (lookup.TryGetValue(normalized + ext, out string p)) return p;
-            }
-
-            foreach (var kvp in lookup)
-            {
-                string stem = Path.GetFileNameWithoutExtension(kvp.Key);
-                if (stem.Length <= 3) continue;
-                if (stem.IndexOf(psName, StringComparison.OrdinalIgnoreCase) >= 0) return kvp.Value;
-                if (psName.IndexOf(stem, StringComparison.OrdinalIgnoreCase) >= 0) return kvp.Value;
-            }
-
-            return null;
         }
 
         private bool ShowFieldsDialog(string initVehicle, string initTest, string initDate,
