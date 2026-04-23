@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
-using System.Linq;
 using System.IO;
 using System.Text;
 using System.Text.RegularExpressions;
@@ -268,30 +267,17 @@ namespace PdfMerger
         {
             if (_pdfFiles.Count < 2 || OutputFolder == null) return;
 
-            string initVehicle, initTest, initDate;
-            ExtractPdfFields(_pdfFiles[0], out initVehicle, out initTest, out initDate);
-
-            string vehicleNum, testNum, inspDate;
-            if (!ShowFieldsDialog(initVehicle, initTest, initDate,
-                    out vehicleNum, out testNum, out inspDate))
-                return;
-
             string outputFile = Path.Combine(OutputFolder,
-                string.Format("{0}_{1}_{2}.pdf", vehicleNum, testNum, inspDate));
+                Path.GetFileNameWithoutExtension(_pdfFiles[0]) + "_merged.pdf");
 
             try
             {
                 btnMerge.Enabled = false;
                 btnMerge.Text = "ממזג...";
 
-                const int RenderDpi = 200;
-                var jpegCodec = System.Drawing.Imaging.ImageCodecInfo.GetImageEncoders()
-                    .First(c => c.FormatID == System.Drawing.Imaging.ImageFormat.Jpeg.Guid);
-                var encParams = new System.Drawing.Imaging.EncoderParameters(1);
-                encParams.Param[0] = new System.Drawing.Imaging.EncoderParameter(
-                    System.Drawing.Imaging.Encoder.Quality, 95L);
+                const int RenderDpi = 300;
 
-                // Render every page from every input PDF to JPEG
+                // Render every page from every input PDF to PNG (lossless — sharp text)
                 var pages = new List<Tuple<float, float, byte[]>>();
                 foreach (string path in _pdfFiles)
                 {
@@ -306,7 +292,7 @@ namespace PdfMerger
                             using (var bmp = (System.Drawing.Bitmap)srcDoc.Render(i, renderW, renderH, false))
                             using (var ms = new MemoryStream())
                             {
-                                bmp.Save(ms, jpegCodec, encParams);
+                                bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                                 pages.Add(Tuple.Create((float)sz.Width, (float)sz.Height, ms.ToArray()));
                             }
                         }
