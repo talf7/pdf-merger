@@ -248,7 +248,7 @@ namespace PdfMerger
 
         private void UpdateMergeButton()
         {
-            bool canMerge = _pdfFiles.Count >= 2 && OutputFolder != null;
+            bool canMerge = _pdfFiles.Count >= 1 && OutputFolder != null;
             btnMerge.Enabled = canMerge;
             btnMerge.BackColor = canMerge
                 ? Color.FromArgb(60, 120, 220)
@@ -265,19 +265,19 @@ namespace PdfMerger
 
         private void btnMerge_Click(object sender, EventArgs e)
         {
-            if (_pdfFiles.Count < 2 || OutputFolder == null) return;
+            if (_pdfFiles.Count < 1 || OutputFolder == null) return;
 
             string outputFile = Path.Combine(OutputFolder,
-                Path.GetFileNameWithoutExtension(_pdfFiles[0]) + "_merged.pdf");
+                Path.GetFileNameWithoutExtension(_pdfFiles[0]) + ".pdf");
 
             try
             {
                 btnMerge.Enabled = false;
                 btnMerge.Text = "ממזג...";
 
-                const int RenderDpi = 300;
+                const int RenderDpi = 400;
 
-                // Render every page from every input PDF to PNG (lossless — sharp text)
+                // Render every page to PNG at 400 DPI using print pipeline (sharpest output)
                 var pages = new List<Tuple<float, float, byte[]>>();
                 foreach (string path in _pdfFiles)
                 {
@@ -289,9 +289,10 @@ namespace PdfMerger
                             int renderW = (int)Math.Round(sz.Width  / 72.0 * RenderDpi);
                             int renderH = (int)Math.Round(sz.Height / 72.0 * RenderDpi);
 
-                            using (var bmp = (System.Drawing.Bitmap)srcDoc.Render(i, renderW, renderH, false))
+                            using (var bmp = (System.Drawing.Bitmap)srcDoc.Render(i, renderW, renderH, true))
                             using (var ms = new MemoryStream())
                             {
+                                bmp.SetResolution(RenderDpi, RenderDpi);
                                 bmp.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
                                 pages.Add(Tuple.Create((float)sz.Width, (float)sz.Height, ms.ToArray()));
                             }
